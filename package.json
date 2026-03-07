@@ -1,0 +1,21 @@
+{
+  "name": "timebot",
+  "version": "0.1.0",
+  "description": "Slack bot for Tempo timesheet automation",
+  "type": "module",
+  "scripts": {
+    "setup": "bun src/setup.ts",
+    "start": "bun src/index.ts",
+    "dev": "bun --watch src/index.ts"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@slack/bolt": "^4.1.0",
+    "node-cron": "^3.0.3",
+    "yaml": "^2.7.0"
+  },
+  "devDependencies": {
+    "@types/node-cron": "^3.0.11",
+    "typescript": "^5.7.0"
+  }
+}

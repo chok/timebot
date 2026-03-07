@@ -1,0 +1,24 @@
+# Timebot user configuration
+user:
+  # Your Jira account ID (retrieved automatically during setup)
+  jiraAccountId: ""
+  # Your Slack user ID (retrieved automatically during setup)
+  slackUserId: ""
+  # Country for public holidays: FR, QC, ES
+  country: "FR"
+  # Jira project key for work tickets
+  workProject: "CYB"
+  # Jira project key for admin/absence tickets
+  adminProject: "ADM"
+  # Weekly target hours
+  weeklyHours: 35
+  # Default daily hours (when no special instructions)
+  dailyHours: 7
+  # Time of daily Slack reminder (24h format, in your timezone)
+  reminderTime: "17:00"
+  # Your timezone
+  timezone: "Europe/Paris"
+  # GitHub username (for commit/PR lookup during catchup)
+  githubUsername: ""
+  # GitHub org to search in
+  githubOrg: "demarque"
