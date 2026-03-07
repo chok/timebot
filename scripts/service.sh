@@ -4,7 +4,8 @@
 
 set -e
 
-PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null || python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$0")"
+PROJECT_DIR="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
 PLIST_NAME="com.maximepicaud.timebot.plist"
 PLIST_SRC="$PROJECT_DIR/$PLIST_NAME"
 PLIST_DST="$HOME/Library/LaunchAgents/$PLIST_NAME"
@@ -56,15 +57,17 @@ case "${1:-}" in
     ;;
 
   status)
-    if launchctl list | grep -q "$PLIST_NAME"; then
-      PID=$(launchctl list | grep "$PLIST_NAME" | awk '{print $1}')
-      if [ "$PID" = "-" ]; then
-        echo "Timebot: charge mais pas en cours."
-      else
-        echo "Timebot: en cours (PID $PID)"
-      fi
-    else
+    LABEL="com.maximepicaud.timebot"
+    INFO=$(launchctl list "$LABEL" 2>&1) || {
       echo "Timebot: non installe."
+      exit 0
+    }
+    PID=$(echo "$INFO" | grep '"PID"' | awk '{print $3}' | tr -d ';')
+    if [ -n "$PID" ]; then
+      echo "Timebot: en cours (PID $PID)"
+    else
+      EXIT=$(echo "$INFO" | grep '"LastExitStatus"' | awk '{print $3}' | tr -d ';')
+      echo "Timebot: arrete (dernier exit: ${EXIT:-?})"
     fi
     ;;
 
