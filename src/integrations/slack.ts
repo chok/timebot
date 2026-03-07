@@ -18,15 +18,23 @@ let app: InstanceType<typeof App>;
 
 interface PendingEntry {
   issueKey: string;
+  issueId: number;
   summary: string;
   hours: number;
   date: string;
 }
 
+interface CatchupWeek {
+  monday: string;
+  days: DayStatus[];
+  ghActivity: GitHubActivity[];
+}
+
 interface ConversationState {
   dayStatus: DayStatus;
   pendingEntries?: PendingEntry[];
-  catchupDates?: string[];
+  catchupWeeks?: CatchupWeek[];
+  currentWeekIndex?: number;
   githubActivity?: GitHubActivity[];
 }
 
@@ -55,7 +63,7 @@ async function executeConfirmedLog(
 
   for (const entry of entries) {
     await createWorklog({
-      issueKey: entry.issueKey,
+      issueId: entry.issueId,
       accountId: config.user.jiraAccountId,
       date: entry.date,
       seconds: entry.hours * 3600,
@@ -144,28 +152,29 @@ function registerHandlers() {
     try {
       const config = loadConfig();
       const logged = await executeConfirmedLog(userId, conv.pendingEntries, config);
-      const date = conv.pendingEntries[0].date;
-      const catchupDates = conv.catchupDates;
 
-      // Clear pending but keep catchup context
       conv.pendingEntries = undefined;
 
       await client.chat.postMessage({
         channel: userId,
-        text: `Logge: ${logged} (${date}).`,
+        text: `✅ Logge: ${logged}`,
       });
 
-      // If in catchup mode, move to next unfilled day
-      if (catchupDates?.length) {
-        const remaining = catchupDates.filter((d) => d !== date);
-        if (remaining.length > 0) {
-          conversations.delete(userId);
-          await sendCatchupPrompt(client, userId, remaining, config);
+      // In week-by-week catchup mode: advance to next week
+      if (conv.catchupWeeks?.length && conv.currentWeekIndex !== undefined) {
+        conv.currentWeekIndex++;
+        if (conv.currentWeekIndex < conv.catchupWeeks.length) {
+          const sayViaClient = (msg: string | Record<string, any>) =>
+            client.chat.postMessage({
+              channel: userId,
+              ...(typeof msg === "string" ? { text: msg } : msg),
+            });
+          await sendWeekPrompt(sayViaClient, config, userId);
         } else {
           conversations.delete(userId);
           await client.chat.postMessage({
             channel: userId,
-            text: "Semaine complete !",
+            text: "Rattrapage termine ! 🎉",
           });
         }
       } else {
@@ -185,24 +194,29 @@ function registerHandlers() {
     if (body.type !== "block_actions") return;
     const userId = body.user.id;
     const conv = conversations.get(userId);
-    const catchupDates = conv?.catchupDates;
-    const currentDate = conv?.dayStatus?.date;
 
     conv && (conv.pendingEntries = undefined);
 
-    // In catchup mode, skip this day and move to next
-    if (catchupDates?.length) {
-      const remaining = catchupDates.filter((d) => d !== currentDate);
-      conversations.delete(userId);
+    // In week-by-week catchup mode: skip to next week
+    if (conv?.catchupWeeks?.length && conv.currentWeekIndex !== undefined) {
+      const skippedWeek = conv.catchupWeeks[conv.currentWeekIndex];
+      conv.currentWeekIndex++;
 
-      if (remaining.length > 0) {
+      await client.chat.postMessage({
+        channel: userId,
+        text: `Semaine du ${dayName(skippedWeek.monday)} passee.`,
+      });
+
+      if (conv.currentWeekIndex < conv.catchupWeeks.length) {
         const config = loadConfig();
-        await client.chat.postMessage({
-          channel: userId,
-          text: `${dayName(currentDate!)} passe.`,
-        });
-        await sendCatchupPrompt(client, userId, remaining, config);
+        const sayViaClient = (msg: string | Record<string, any>) =>
+          client.chat.postMessage({
+            channel: userId,
+            ...(typeof msg === "string" ? { text: msg } : msg),
+          });
+        await sendWeekPrompt(sayViaClient, config, userId);
       } else {
+        conversations.delete(userId);
         await client.chat.postMessage({
           channel: userId,
           text: "Rattrapage termine.",
@@ -232,14 +246,28 @@ function registerHandlers() {
 
     const issue = await getIssue(issueKey);
 
-    conv.pendingEntries = [
-      {
-        issueKey,
-        summary: issue.fields.summary,
-        hours: conv.dayStatus.remainingHours,
-        date: conv.dayStatus.date,
-      },
-    ];
+    // In week-by-week catchup: apply to whole current week
+    const week = conv.catchupWeeks?.[conv.currentWeekIndex ?? -1];
+    const id = Number(issue.id);
+    conv.pendingEntries = week
+      ? week.days
+          .filter((d) => d.remainingHours > 0)
+          .map((d) => ({
+            issueKey,
+            issueId: id,
+            summary: issue.fields.summary,
+            hours: d.remainingHours,
+            date: d.date,
+          }))
+      : [
+          {
+            issueKey,
+            issueId: id,
+            summary: issue.fields.summary,
+            hours: conv.dayStatus.remainingHours,
+            date: conv.dayStatus.date,
+          },
+        ];
 
     await client.chat.postMessage({
       channel: userId,
@@ -271,14 +299,28 @@ function registerHandlers() {
         text: `Ticket cree: ${issue.key} - ${issue.fields.summary}`,
       });
 
-      conv.pendingEntries = [
-        {
-          issueKey: issue.key,
-          summary: issue.fields.summary,
-          hours: conv.dayStatus.remainingHours,
-          date: conv.dayStatus.date,
-        },
-      ];
+      // In week-by-week catchup: apply to whole current week
+      const week = conv.catchupWeeks?.[conv.currentWeekIndex ?? -1];
+      const id = Number(issue.id);
+      conv.pendingEntries = week
+        ? week.days
+            .filter((d) => d.remainingHours > 0)
+            .map((d) => ({
+              issueKey: issue.key,
+              issueId: id,
+              summary: issue.fields.summary,
+              hours: d.remainingHours,
+              date: d.date,
+            }))
+        : [
+            {
+              issueKey: issue.key,
+              issueId: id,
+              summary: issue.fields.summary,
+              hours: conv.dayStatus.remainingHours,
+              date: conv.dayStatus.date,
+            },
+          ];
 
       await client.chat.postMessage({
         channel: userId,
@@ -292,80 +334,31 @@ function registerHandlers() {
     }
   });
 
-  // ── FILL a specific catchup day ──
-  app.action(/^fillday_/, async ({ ack, body, client, action }: any) => {
-    await ack();
-    if (body.type !== "block_actions") return;
-    if (action.type !== "button") return;
 
-    const userId = body.user.id;
-    const conv = conversations.get(userId);
-    if (!conv) return;
-
-    const date = action.value;
-    if (!date) return;
-
-    const config = loadConfig();
-    const status = await getDayStatus(config, date);
-    const ticket = await getCurrentTicketForUser(config);
-
-    // Update conversation to target this date
-    conv.dayStatus = status;
-
-    if (ticket) {
-      await client.chat.postMessage({
-        channel: userId,
-        text: `*${dayName(date)}* — ${status.remainingHours}h a logger.\nTicket en cours: *${ticket.key}* - ${ticket.fields.summary}\n\nReponds *continue* pour logger dessus, ou decris ce que tu as fait ce jour-la.`,
-      });
-    } else {
-      await client.chat.postMessage({
-        channel: userId,
-        text: `*${dayName(date)}* — ${status.remainingHours}h a logger.\nDecris ce que tu as fait ce jour-la.`,
-      });
-    }
-  });
-
-  // ── FILL ALL remaining days with current ticket ──
-  app.action("fillall_current", async ({ ack, body, client }: any) => {
+  // ── CATCHUP: fill whole week with ticket ──
+  app.action("catchup_week_all", async ({ ack, body, client, action }: any) => {
     await ack();
     if (body.type !== "block_actions") return;
 
     const userId = body.user.id;
     const conv = conversations.get(userId);
-    if (!conv?.catchupDates?.length) return;
+    const week = conv?.catchupWeeks?.[conv.currentWeekIndex ?? -1];
+    if (!conv || !week) return;
 
+    const issueKey = action.value;
     const config = loadConfig();
-    const ticket = await getCurrentTicketForUser(config);
-    if (!ticket) {
-      await client.chat.postMessage({
-        channel: userId,
-        text: "Aucun ticket 'In Progress' trouve.",
-      });
-      return;
-    }
+    const issue = await getIssue(issueKey);
+    const id = Number(issue.id);
 
-    // Build entries for all unfilled days
-    const entries: PendingEntry[] = [];
-    for (const date of conv.catchupDates) {
-      const status = await getDayStatus(config, date);
-      if (status.remainingHours > 0) {
-        entries.push({
-          issueKey: ticket.key,
-          summary: ticket.fields.summary,
-          hours: status.remainingHours,
-          date,
-        });
-      }
-    }
-
-    if (entries.length === 0) {
-      conversations.delete(userId);
-      await client.chat.postMessage({
-        channel: userId,
-        text: "Rien a remplir.",
-      });
-      return;
-    }
+    const entries: PendingEntry[] = week.days
+      .filter((d) => d.remainingHours > 0)
+      .map((d) => ({
+        issueKey,
+        issueId: id,
+        summary: issue.fields.summary,
+        hours: d.remainingHours,
+        date: d.date,
+      }));
 
     conv.pendingEntries = entries;
     await client.chat.postMessage({
@@ -374,48 +367,126 @@ function registerHandlers() {
     });
   });
 
-  // ── FILL ALL with a specific suggested ticket ──
-  app.action(/^fillall_ticket_/, async ({ ack, body, client, action }: any) => {
+  // ── CATCHUP: fill until a specific day ──
+  app.action(/^catchup_until_/, async ({ ack, body, client, action }: any) => {
     await ack();
     if (body.type !== "block_actions") return;
-    if (action.type !== "button") return;
 
     const userId = body.user.id;
     const conv = conversations.get(userId);
-    if (!conv?.catchupDates?.length) return;
+    const week = conv?.catchupWeeks?.[conv.currentWeekIndex ?? -1];
+    if (!conv || !week) return;
 
+    const untilDate = (action.action_id as string).replace("catchup_until_", "");
     const issueKey = action.value;
-    if (!issueKey) return;
-
     const config = loadConfig();
     const issue = await getIssue(issueKey);
+    const id = Number(issue.id);
 
-    const entries: PendingEntry[] = [];
-    for (const date of conv.catchupDates) {
-      const status = await getDayStatus(config, date);
-      if (status.remainingHours > 0) {
-        entries.push({
-          issueKey,
-          summary: issue.fields.summary,
-          hours: status.remainingHours,
-          date,
-        });
-      }
-    }
-
-    if (entries.length === 0) {
-      conversations.delete(userId);
-      await client.chat.postMessage({
-        channel: userId,
-        text: "Rien a remplir.",
-      });
-      return;
-    }
+    const entries: PendingEntry[] = week.days
+      .filter((d) => d.remainingHours > 0 && d.date <= untilDate)
+      .map((d) => ({
+        issueKey,
+        issueId: id,
+        summary: issue.fields.summary,
+        hours: d.remainingHours,
+        date: d.date,
+      }));
 
     conv.pendingEntries = entries;
     await client.chat.postMessage({
       channel: userId,
       ...confirmBlock(entries),
+    });
+  });
+
+  // ── CATCHUP: let Claude decide based on GitHub ──
+  app.action("catchup_claude", async ({ ack, body, client }: any) => {
+    await ack();
+    if (body.type !== "block_actions") return;
+
+    const userId = body.user.id;
+    const conv = conversations.get(userId);
+    const week = conv?.catchupWeeks?.[conv.currentWeekIndex ?? -1];
+    if (!conv || !week) return;
+
+    const config = loadConfig();
+
+    await client.chat.postMessage({
+      channel: userId,
+      text: "🤖 Analyse en cours...",
+    });
+
+    let analysis;
+    try {
+      analysis = await analyzeGitHubActivity(
+        config.user.workProject,
+        config.user.jiraAccountId,
+        week.ghActivity.length > 0 ? week.ghActivity : conv.githubActivity || []
+      );
+    } catch {
+      await client.chat.postMessage({
+        channel: userId,
+        text: "Erreur Claude. Envoie un numero de ticket directement.",
+      });
+      return;
+    }
+
+    const weekHours = week.days.reduce((s, d) => s + d.remainingHours, 0);
+    const blocks: any[] = [
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `🤖 *${analysis.understood}*`,
+        },
+      },
+    ];
+
+    for (const s of analysis.suggestions) {
+      const conf = s.confidence === "high" ? "🟢" : s.confidence === "medium" ? "🟡" : "🔴";
+      blocks.push({
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `${conf} *${s.issueKey}* — ${s.summary}\n_${s.reason}_`,
+        },
+        accessory: {
+          type: "button",
+          text: { type: "plain_text", text: `Toute la semaine (${weekHours}h)` },
+          action_id: `catchup_week_all`,
+          value: s.issueKey,
+        },
+      });
+    }
+
+    if (analysis.shouldCreateNew && analysis.suggestedSummary) {
+      blocks.push({ type: "divider" });
+      blocks.push({
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `Ou creer: _${analysis.suggestedSummary}_`,
+        },
+        accessory: {
+          type: "button",
+          text: { type: "plain_text", text: "Creer" },
+          action_id: "create_ticket",
+          value: analysis.suggestedSummary,
+          style: "primary",
+        },
+      });
+    }
+
+    blocks.push({
+      type: "context",
+      elements: [{ type: "mrkdwn", text: "Ou envoie un numero de ticket / une description." }],
+    });
+
+    await client.chat.postMessage({
+      channel: userId,
+      blocks,
+      text: "Suggestions Claude",
     });
   });
 }
@@ -455,7 +526,7 @@ async function handleCatchup(say: SayFn, config: Config) {
   const from = unfilled[0].date;
   const to = unfilled[unfilled.length - 1].date;
 
-  // Fetch GitHub activity for the period
+  // Fetch GitHub activity for the whole period
   let ghActivity: GitHubActivity[] = [];
   if (config.user.githubUsername && config.user.githubOrg) {
     try {
@@ -465,33 +536,186 @@ async function handleCatchup(say: SayFn, config: Config) {
         from,
         to
       );
-    } catch {
-      // GitHub unavailable, continue without
-    }
+    } catch {}
   }
+
+  // Group unfilled days into weeks
+  const weeks = groupByWeek(unfilled, ghActivity);
 
   const userId = config.user.slackUserId;
   conversations.set(userId, {
     dayStatus: unfilled[0],
-    catchupDates: unfilled.map((d) => d.date),
+    catchupWeeks: weeks,
+    currentWeekIndex: 0,
     githubActivity: ghActivity,
   });
 
-  // If we have GitHub activity, ask Claude for suggestions
-  let analysis: Awaited<ReturnType<typeof analyzeGitHubActivity>> | null = null;
-  if (ghActivity.length > 0) {
-    try {
-      analysis = await analyzeGitHubActivity(
-        config.user.workProject,
-        config.user.jiraAccountId,
-        ghActivity
-      );
-    } catch {
-      // Claude unavailable, continue without suggestions
+  // Show overview then start first week
+  await say(catchupOverview(unfilled, totalHours, weeks.length));
+  await sendWeekPrompt(say, config, userId);
+}
+
+function groupByWeek(days: DayStatus[], ghActivity: GitHubActivity[]): CatchupWeek[] {
+  const ghByDate = new Map<string, GitHubActivity>();
+  for (const a of ghActivity) ghByDate.set(a.date, a);
+
+  const weekMap = new Map<string, CatchupWeek>();
+  for (const d of days) {
+    const dt = new Date(d.date + "T12:00:00");
+    const mon = new Date(dt);
+    mon.setDate(dt.getDate() - ((dt.getDay() + 6) % 7));
+    const monStr = formatLocalDate(mon);
+
+    if (!weekMap.has(monStr)) {
+      weekMap.set(monStr, { monday: monStr, days: [], ghActivity: [] });
+    }
+    const week = weekMap.get(monStr)!;
+    week.days.push(d);
+
+    const gh = ghByDate.get(d.date);
+    if (gh) week.ghActivity.push(gh);
+  }
+
+  return [...weekMap.values()].sort((a, b) => a.monday.localeCompare(b.monday));
+}
+
+function catchupOverview(unfilled: DayStatus[], totalHours: number, weekCount: number) {
+  const lines = unfilled.map(
+    (d) => `${statusEmoji(d)}  \`${dayName(d.date).padEnd(18)}\`  ${progressBar(d.loggedHours, d.targetHours)}  *${d.remainingHours}h*`
+  );
+
+  // Split into chunks of ~10 lines to stay under 3000 chars
+  const blocks: any[] = [
+    {
+      type: "header",
+      text: { type: "plain_text", text: `📋 Rattrapage — ${unfilled.length} jour(s), ${totalHours}h` },
+    },
+  ];
+
+  for (let i = 0; i < lines.length; i += 10) {
+    blocks.push({
+      type: "section",
+      text: { type: "mrkdwn", text: lines.slice(i, i + 10).join("\n") },
+    });
+  }
+
+  blocks.push({
+    type: "context",
+    elements: [{ type: "mrkdwn", text: `${weekCount} semaine(s) a parcourir. C'est parti !` }],
+  });
+
+  return { blocks, text: `Rattrapage: ${unfilled.length} jour(s)` };
+}
+
+async function sendWeekPrompt(say: SayFn, config: Config, userId: string) {
+  const conv = conversations.get(userId);
+  if (!conv?.catchupWeeks?.length || conv.currentWeekIndex === undefined) return;
+
+  if (conv.currentWeekIndex >= conv.catchupWeeks.length) {
+    await say("Rattrapage termine ! 🎉");
+    conversations.delete(userId);
+    return;
+  }
+
+  const week = conv.catchupWeeks[conv.currentWeekIndex];
+  const ticket = await getCurrentTicketForUser(config);
+  const weekHours = week.days.reduce((s, d) => s + d.remainingHours, 0);
+
+  // Build week context
+  const dayLines = week.days.map((d) => {
+    const line = `${statusEmoji(d)}  \`${dayName(d.date).padEnd(18)}\`  *${d.remainingHours}h*`;
+    return line;
+  });
+
+  // GitHub activity for this week
+  const ghLines: string[] = [];
+  for (const gh of week.ghActivity) {
+    for (const c of gh.commits.slice(0, 3)) {
+      const msg = c.message.length > 60 ? c.message.slice(0, 57) + "..." : c.message;
+      ghLines.push(`💻 <${c.url}|\`${c.sha}\`> ${msg}`);
+    }
+    for (const pr of gh.prs.slice(0, 2)) {
+      const title = pr.title.length > 60 ? pr.title.slice(0, 57) + "..." : pr.title;
+      ghLines.push(`🔀 <${pr.url}|#${pr.number}> ${title}`);
     }
   }
 
-  await say(catchupBlock(unfilled, config, totalHours, ghActivity, analysis));
+  const blocks: any[] = [
+    {
+      type: "header",
+      text: { type: "plain_text", text: `📅 Semaine du ${dayName(week.monday)} (${weekHours}h)` },
+    },
+    {
+      type: "section",
+      text: { type: "mrkdwn", text: dayLines.join("\n") },
+    },
+  ];
+
+  if (ghLines.length > 0) {
+    blocks.push({
+      type: "context",
+      elements: [{ type: "mrkdwn", text: ghLines.slice(0, 8).join("\n") }],
+    });
+  }
+
+  if (ticket) {
+    blocks.push({ type: "divider" });
+    blocks.push({
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: `Ticket en cours: *${ticket.key}* — ${ticket.fields.summary}`,
+      },
+    });
+
+    // Duration buttons: whole week, or up to specific day
+    const durationButtons: any[] = [
+      {
+        type: "button",
+        text: { type: "plain_text", text: `✅ Toute la semaine (${weekHours}h)` },
+        action_id: "catchup_week_all",
+        value: ticket.key,
+        style: "primary",
+      },
+    ];
+
+    // Individual day limit buttons (only if > 1 day)
+    if (week.days.length > 1) {
+      for (let i = 0; i < week.days.length - 1; i++) {
+        const d = week.days[i];
+        const hoursUpTo = week.days.slice(0, i + 1).reduce((s, dd) => s + dd.remainingHours, 0);
+        durationButtons.push({
+          type: "button",
+          text: { type: "plain_text", text: `Jusqu'a ${dayName(d.date)} (${hoursUpTo}h)` },
+          action_id: `catchup_until_${d.date}`,
+          value: ticket.key,
+        });
+      }
+    }
+
+    blocks.push({
+      type: "actions",
+      elements: durationButtons.slice(0, 5),
+    });
+  }
+
+  // "Autre chose" option
+  blocks.push({ type: "divider" });
+  blocks.push({
+    type: "section",
+    text: { type: "mrkdwn", text: "Autre ticket ? Decris ce que tu as fait ou envoie un numero de ticket." },
+    accessory: {
+      type: "button",
+      text: { type: "plain_text", text: "🤖 Claude decide" },
+      action_id: "catchup_claude",
+      style: "primary",
+    },
+  });
+
+  // Update conversation to target this week's first day
+  conv.dayStatus = week.days[0];
+
+  await say({ blocks, text: `Semaine du ${dayName(week.monday)}` });
 }
 
 async function handleDateContext(say: SayFn, config: Config, date: string) {
@@ -543,6 +767,7 @@ async function handleContinue(say: SayFn, config: Config) {
   const entries: PendingEntry[] = [
     {
       issueKey: ticket.key,
+      issueId: Number(ticket.id),
       summary: ticket.fields.summary,
       hours: status.remainingHours,
       date: status.date,
@@ -580,6 +805,7 @@ async function handleFreeText(say: SayFn, config: Config, text: string) {
     splitEntries.push({
       hours: parseFloat(match[1].replace(",", ".")),
       issueKey: match[2].toUpperCase(),
+      issueId: 0,
       summary: "",
       date: status.date,
     });
@@ -597,6 +823,7 @@ async function handleFreeText(say: SayFn, config: Config, text: string) {
         splitEntries.push({
           hours: status.remainingHours - totalExplicit,
           issueKey: ticket.key,
+          issueId: Number(ticket.id),
           summary: ticket.fields.summary,
           date: status.date,
         });
@@ -604,12 +831,13 @@ async function handleFreeText(say: SayFn, config: Config, text: string) {
     }
 
     for (const entry of splitEntries) {
-      if (!entry.summary) {
+      if (!entry.summary || !entry.issueId) {
         try {
           const issue = await getIssue(entry.issueKey);
-          entry.summary = issue.fields.summary;
+          entry.summary = entry.summary || issue.fields.summary;
+          entry.issueId = Number(issue.id);
         } catch {
-          entry.summary = entry.issueKey;
+          entry.summary = entry.summary || entry.issueKey;
         }
       }
     }
@@ -629,14 +857,30 @@ async function handleFreeText(say: SayFn, config: Config, text: string) {
     const issueKey = ticketMatch[1].toUpperCase();
     try {
       const issue = await getIssue(issueKey);
-      const entries: PendingEntry[] = [
-        {
-          issueKey,
-          summary: issue.fields.summary,
-          hours: status.remainingHours,
-          date: status.date,
-        },
-      ];
+
+      // In week-by-week catchup: apply to whole current week
+      const week = conv?.catchupWeeks?.[conv.currentWeekIndex ?? -1];
+      const id = Number(issue.id);
+      const entries: PendingEntry[] = week
+        ? week.days
+            .filter((d) => d.remainingHours > 0)
+            .map((d) => ({
+              issueKey,
+              issueId: id,
+              summary: issue.fields.summary,
+              hours: d.remainingHours,
+              date: d.date,
+            }))
+        : [
+            {
+              issueKey,
+              issueId: id,
+              summary: issue.fields.summary,
+              hours: status.remainingHours,
+              date: status.date,
+            },
+          ];
+
       if (!conv) {
         conversations.set(userId, { dayStatus: status, pendingEntries: entries });
       } else {
@@ -740,172 +984,7 @@ function progressBar(logged: number, target: number): string {
   return "█".repeat(filled) + "░".repeat(8 - filled);
 }
 
-function catchupBlock(
-  unfilled: DayStatus[],
-  _config: Config,
-  totalHours?: number,
-  ghActivity?: GitHubActivity[],
-  analysis?: { understood: string; suggestions: { issueKey: string; summary: string; confidence: string; reason: string }[]; shouldCreateNew: boolean; suggestedSummary?: string } | null
-) {
-  const total = totalHours ?? unfilled.reduce((s, d) => s + d.remainingHours, 0);
 
-  // Group unfilled by week
-  const byWeek = new Map<string, DayStatus[]>();
-  for (const d of unfilled) {
-    const dt = new Date(d.date + "T12:00:00");
-    const mon = new Date(dt);
-    mon.setDate(dt.getDate() - ((dt.getDay() + 6) % 7));
-    const weekKey = formatLocalDate(mon);
-    const list = byWeek.get(weekKey) || [];
-    list.push(d);
-    byWeek.set(weekKey, list);
-  }
-
-  // Index GitHub activity by date
-  const ghByDate = new Map<string, GitHubActivity>();
-  if (ghActivity) {
-    for (const a of ghActivity) ghByDate.set(a.date, a);
-  }
-
-  const dayButtons = unfilled.map((d) => ({
-    type: "button" as const,
-    text: { type: "plain_text" as const, text: dayName(d.date) },
-    action_id: `fillday_${d.date}`,
-    value: d.date,
-  }));
-
-  const blocks: any[] = [
-    {
-      type: "header",
-      text: { type: "plain_text", text: `📋 Rattrapage — ${unfilled.length} jour(s)` },
-    },
-  ];
-
-  // Per-week sections with GitHub activity inline
-  for (const [weekMon, days] of byWeek) {
-    const weekHours = days.reduce((s, d) => s + d.remainingHours, 0);
-    const lines: string[] = [];
-
-    for (const d of days) {
-      lines.push(
-        `${statusEmoji(d)}  \`${dayName(d.date).padEnd(18)}\`  ${progressBar(d.loggedHours, d.targetHours)}  *${d.remainingHours}h*`
-      );
-
-      // Show GitHub activity for this day
-      const dayGh = ghByDate.get(d.date);
-      if (dayGh) {
-        for (const c of dayGh.commits) {
-          lines.push(`      💻 <${c.url}|\`${c.sha}\`> ${c.message}  _${c.repo}_`);
-        }
-        for (const pr of dayGh.prs) {
-          lines.push(`      🔀 <${pr.url}|#${pr.number}> ${pr.title}  _${pr.repo}_`);
-        }
-      }
-    }
-
-    blocks.push({
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: `*Semaine du ${dayName(weekMon)}* — ${weekHours}h a remplir\n${lines.join("\n")}`,
-      },
-    });
-  }
-
-  blocks.push({
-    type: "context",
-    elements: [{ type: "mrkdwn", text: `*Total: ${total}h sur ${unfilled.length} jour(s)*` }],
-  });
-
-  // Claude suggestions based on GitHub activity
-  if (analysis?.suggestions?.length) {
-    blocks.push({ type: "divider" });
-    blocks.push({
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: `🤖 *Suggestions (basees sur GitHub):*\n_${analysis.understood}_`,
-      },
-    });
-
-    for (const s of analysis.suggestions) {
-      const conf = s.confidence === "high" ? "🟢" : s.confidence === "medium" ? "🟡" : "🔴";
-      blocks.push({
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: `${conf} *${s.issueKey}* — ${s.summary}\n      _${s.reason}_`,
-        },
-        accessory: {
-          type: "button",
-          text: { type: "plain_text", text: "Tout sur ce ticket" },
-          action_id: `fillall_ticket_${s.issueKey}`,
-          value: s.issueKey,
-        },
-      });
-    }
-  }
-
-  blocks.push({ type: "divider" });
-
-  blocks.push({
-    type: "section",
-    text: { type: "mrkdwn", text: "*Remplir jour par jour:*" },
-  });
-
-  for (let i = 0; i < dayButtons.length; i += 5) {
-    blocks.push({
-      type: "actions",
-      elements: dayButtons.slice(i, i + 5),
-    });
-  }
-
-  blocks.push({ type: "divider" });
-  blocks.push({
-    type: "actions",
-    elements: [
-      {
-        type: "button",
-        text: { type: "plain_text", text: `⚡ Tout remplir (${total}h)` },
-        action_id: "fillall_current",
-        style: "primary",
-      },
-    ],
-  });
-
-  return { blocks, text: `Rattrapage: ${unfilled.length} jour(s), ${total}h` };
-}
-
-async function sendCatchupPrompt(
-  client: any,
-  userId: string,
-  dates: string[],
-  config: Config
-) {
-  const statuses: DayStatus[] = [];
-  for (const date of dates) {
-    const s = await getDayStatus(config, date);
-    if (s.remainingHours > 0) statuses.push(s);
-  }
-
-  if (statuses.length === 0) {
-    await client.chat.postMessage({
-      channel: userId,
-      text: "Tout est rempli !",
-    });
-    return;
-  }
-
-  conversations.set(userId, {
-    dayStatus: statuses[0],
-    catchupDates: statuses.map((s) => s.date),
-  });
-
-  await client.chat.postMessage({
-    channel: userId,
-    ...catchupBlock(statuses, config),
-  });
-}
 
 // ──────────────────────────────────────────────
 // Confirmation block — shown before EVERY log

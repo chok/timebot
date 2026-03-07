@@ -45,14 +45,14 @@ export function totalLoggedHours(worklogs: TempoWorklog[]): number {
 }
 
 export async function createWorklog(params: {
-  issueKey: string;
+  issueId: number;
   accountId: string;
   date: string;
   seconds: number;
   description?: string;
 }): Promise<TempoWorklog> {
   const body = {
-    issueKey: params.issueKey,
+    issueId: params.issueId,
     timeSpentSeconds: params.seconds,
     startDate: params.date,
     startTime: "09:00:00",
