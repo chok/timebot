@@ -4,3 +4,4 @@ dist/
 config.yaml
 bun.lockb
 .last_reminder
+timebot.log
