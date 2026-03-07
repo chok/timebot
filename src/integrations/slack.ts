@@ -104,6 +104,53 @@ function dayName(date: string): string {
 // Handlers
 // ──────────────────────────────────────────────
 function registerHandlers() {
+  // ── Slash commands ──
+  app.command("/timebot", async ({ ack, respond, command }: any) => {
+    await ack();
+    const config = loadConfig();
+    if (command.user_id !== config.user.slackUserId) return;
+    const say = (msg: string | Record<string, any>) =>
+      respond(typeof msg === "string" ? { text: msg, response_type: "ephemeral" } : { ...msg, response_type: "ephemeral" });
+    await handleStatus(say, config);
+  });
+
+  app.command("/semaine", async ({ ack, respond, command }: any) => {
+    await ack();
+    const config = loadConfig();
+    if (command.user_id !== config.user.slackUserId) return;
+    const say = (msg: string | Record<string, any>) =>
+      respond(typeof msg === "string" ? { text: msg, response_type: "ephemeral" } : { ...msg, response_type: "ephemeral" });
+    await handleWeekStatus(say, config);
+  });
+
+  app.command("/rattrapage", async ({ ack, respond, command }: any) => {
+    await ack();
+    const config = loadConfig();
+    if (command.user_id !== config.user.slackUserId) return;
+    const say = (msg: string | Record<string, any>) =>
+      respond(typeof msg === "string" ? { text: msg, response_type: "ephemeral" } : { ...msg, response_type: "ephemeral" });
+    await handleCatchup(say, config);
+  });
+
+  app.command("/hier", async ({ ack, respond, command }: any) => {
+    await ack();
+    const config = loadConfig();
+    if (command.user_id !== config.user.slackUserId) return;
+    const say = (msg: string | Record<string, any>) =>
+      respond(typeof msg === "string" ? { text: msg, response_type: "ephemeral" } : { ...msg, response_type: "ephemeral" });
+    await handleDateContext(say, config, yesterdayStr());
+  });
+
+  app.command("/continue", async ({ ack, respond, command }: any) => {
+    await ack();
+    const config = loadConfig();
+    if (command.user_id !== config.user.slackUserId) return;
+    const say = (msg: string | Record<string, any>) =>
+      respond(typeof msg === "string" ? { text: msg, response_type: "ephemeral" } : { ...msg, response_type: "ephemeral" });
+    await handleContinue(say, config);
+  });
+
+  // ── DM: free text (ticket key, description, "oui") ──
   app.message(async ({ message, say }: any) => {
     if (message.subtype) return;
     if (!("text" in message) || !message.text) return;
@@ -115,19 +162,7 @@ function registerHandlers() {
     if (!userId) return;
     if (userId !== config.user.slackUserId) return;
 
-    if (text === "status" || text === "statut") {
-      await handleStatus(say, config);
-    } else if (text === "semaine" || text === "week") {
-      await handleWeekStatus(say, config);
-    } else if (text === "rattrapage" || text === "catchup") {
-      await handleCatchup(say, config);
-    } else if (text === "hier" || text === "yesterday") {
-      await handleDateContext(say, config, yesterdayStr());
-    } else if (
-      text === "continue" ||
-      text === "continuer" ||
-      text === "oui"
-    ) {
+    if (text === "continue" || text === "continuer" || text === "oui") {
       await handleContinue(say, config);
     } else {
       await handleFreeText(say, config, rawText);
