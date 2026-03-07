@@ -3,3 +3,4 @@ dist/
 .env
 config.yaml
 bun.lockb
+.last_reminder
