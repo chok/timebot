@@ -7,9 +7,9 @@ user:
   # Country for public holidays: FR, QC, ES
   country: "FR"
   # Jira project key for work tickets
-  workProject: "CYB"
+  workProject: "PROJ"
   # Jira project key for admin/absence tickets
-  adminProject: "ADM"
+  adminProject: "ADMIN"
   # Weekly target hours
   weeklyHours: 35
   # Default daily hours (when no special instructions)
@@ -21,4 +21,4 @@ user:
   # GitHub username (for commit/PR lookup during catchup)
   githubUsername: ""
   # GitHub org to search in
-  githubOrg: "demarque"
+  githubOrg: ""
