@@ -80,7 +80,7 @@ async function main() {
   console.log("--- Jira / Atlassian ---");
   console.log("Create an API token at: https://id.atlassian.com/manage-profile/security/api-tokens\n");
 
-  const atlassianBaseUrl = await ask("Atlassian base URL", "https://demarque.atlassian.net");
+  const atlassianBaseUrl = await ask("Atlassian base URL (https://xxx.atlassian.net)");
   const atlassianEmail = await ask("Atlassian email");
   const atlassianToken = await askSecret("Atlassian API token");
 
@@ -148,7 +148,7 @@ async function main() {
 
   const githubToken = await askSecret("GitHub token (ghp_... or empty to skip)");
   const githubUsername = await ask("GitHub username");
-  const githubOrg = await ask("GitHub org (for commit/PR search)", "demarque");
+  const githubOrg = await ask("GitHub org (for commit/PR search)");
 
   // --- User config ---
   console.log("\n--- Configuration ---");

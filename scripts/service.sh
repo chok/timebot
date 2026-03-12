@@ -6,9 +6,9 @@ set -e
 
 SCRIPT_PATH="$(readlink -f "$0" 2>/dev/null || python3 -c "import os,sys; print(os.path.realpath(sys.argv[1]))" "$0")"
 PROJECT_DIR="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
-PLIST_NAME="com.maximepicaud.timebot.plist"
-PLIST_SRC="$PROJECT_DIR/$PLIST_NAME"
-PLIST_DST="$HOME/Library/LaunchAgents/$PLIST_NAME"
+LABEL="com.$(whoami).timebot"
+PLIST_TEMPLATE="$PROJECT_DIR/timebot.plist.template"
+PLIST_DST="$HOME/Library/LaunchAgents/$LABEL.plist"
 BUN_PATH="$(which bun 2>/dev/null || echo "")"
 
 case "${1:-}" in
@@ -19,13 +19,15 @@ case "${1:-}" in
     fi
 
     echo "Installation du service Timebot..."
+    echo "  label:   $LABEL"
     echo "  bun:     $BUN_PATH"
     echo "  projet:  $PROJECT_DIR"
 
     # Generate plist with actual paths
-    sed -e "s|__BUN_PATH__|$BUN_PATH|g" \
+    sed -e "s|__LABEL__|$LABEL|g" \
+        -e "s|__BUN_PATH__|$BUN_PATH|g" \
         -e "s|__PROJECT_DIR__|$PROJECT_DIR|g" \
-        "$PLIST_SRC" > "$PLIST_DST"
+        "$PLIST_TEMPLATE" > "$PLIST_DST"
 
     launchctl load "$PLIST_DST"
     echo "Service installe et demarre."
@@ -57,7 +59,6 @@ case "${1:-}" in
     ;;
 
   status)
-    LABEL="com.maximepicaud.timebot"
     INFO=$(launchctl list "$LABEL" 2>&1) || {
       echo "Timebot: non installe."
       exit 0
