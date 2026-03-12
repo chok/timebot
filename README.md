@@ -153,8 +153,8 @@ Tous ces mots-cles fonctionnent aussi en ecrivant directement au bot :
 | `aujourd'hui` / `aujourdhui` / `today` / `auj` | Revenir a aujourd'hui |
 | `rattrapage` / `catchup` | Lancer le rattrapage |
 | `aide` / `help` | Afficher l'aide |
-| `CYB-123` | Logger directement sur un ticket |
-| `3h sur CYB-456, le reste sur CYB-123` | Repartir le temps entre tickets |
+| `PROJ-123` | Logger directement sur un ticket |
+| `3h sur PROJ-456, le reste sur PROJ-123` | Repartir le temps entre tickets |
 | *(texte libre)* | Claude analyse et propose des tickets |
 
 ### Ticket en cours
@@ -218,8 +218,8 @@ user:
   jiraAccountId: "712020:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
   slackUserId: "U0XXXXXXX"
   country: "FR"           # FR, QC, ou ES (jours feries)
-  workProject: "CYB"      # Projet Jira principal
-  adminProject: "ADM"     # Projet admin/absence
+  workProject: "PROJ"     # Projet Jira principal
+  adminProject: "ADMIN"   # Projet admin/absence
   weeklyHours: 35
   dailyHours: 7
   reminderTime: "17:00"   # Heure du rappel quotidien
