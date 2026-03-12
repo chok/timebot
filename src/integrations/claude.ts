@@ -33,7 +33,7 @@ export async function analyzeWorkDescription(
   githubActivity?: GitHubActivity[]
 ): Promise<ClaudeAnalysis> {
   const [activeTickets, searchResults] = await Promise.all([
-    getMyActiveTickets(accountId, project),
+    getMyActiveTickets(accountId, project, 30),
     searchTickets(description, project).catch(() => [] as JiraIssue[]),
   ]);
 
@@ -74,11 +74,16 @@ Format attendu:
   "shouldCreateNew": false,
   "suggestedSummary": "titre si creation necessaire"
 }
-- Utilise l'activite GitHub (commits, PRs) pour deviner sur quel ticket l'utilisateur a travaille.
-- Les messages de commit et titres de PR contiennent souvent des references a des tickets (ex: CYB-123).
-- Si un ticket correspond bien, mets-le en "high".
-- Si aucun ticket ne correspond, mets shouldCreateNew a true avec un suggestedSummary.
-- Maximum 3 suggestions.`,
+
+Regles:
+- Analyse la description et l'activite GitHub (commits, PRs) pour trouver le bon ticket.
+- Les messages de commit et titres de PR contiennent souvent des references explicites (ex: CYB-123 dans le message).
+- Cherche des mots-cles communs entre la description de l'utilisateur et les titres de tickets (meme partiels).
+- Privilege les tickets avec un statut "In Progress" ou recemment mis a jour.
+- Si un ticket correspond clairement, mets-le en "high". Ne mets "high" que si tu es sur.
+- TOUJOURS proposer au moins 1 suggestion si la liste de tickets n'est pas vide — meme avec une confidence "low".
+- Si vraiment aucun ticket ne correspond du tout, mets shouldCreateNew a true avec un suggestedSummary pertinent.
+- Maximum 3 suggestions, triees par pertinence.`,
     messages: [
       {
         role: "user",

@@ -42,8 +42,9 @@ export interface Config {
 export interface TempoWorklog {
   tempoWorklogId: number;
   issue: {
-    key: string;
+    self: string;
     id: number;
+    key?: string;
   };
   timeSpentSeconds: number;
   startDate: string;

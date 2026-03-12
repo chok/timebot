@@ -73,6 +73,26 @@ export async function createWorklog(params: {
   return res.json();
 }
 
+export async function getLastLoggedIssueId(
+  accountId: string
+): Promise<number | null> {
+  // Look at last 7 days of worklogs
+  const to = new Date();
+  const from = new Date();
+  from.setDate(from.getDate() - 7);
+
+  const fmt = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+  const worklogs = await getWorklogs(accountId, fmt(from), fmt(to));
+  if (worklogs.length === 0) return null;
+
+  // Sort by tempoWorklogId DESC — the highest ID is the most recently CREATED worklog
+  worklogs.sort((a, b) => b.tempoWorklogId - a.tempoWorklogId);
+
+  return worklogs[0].issue.id;
+}
+
 export async function deleteWorklog(worklogId: number): Promise<void> {
   const res = await fetch(`${TEMPO_BASE}/worklogs/${worklogId}`, {
     method: "DELETE",

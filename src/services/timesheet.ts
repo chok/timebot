@@ -1,5 +1,5 @@
-import { getWorklogsForDate, totalLoggedHours } from "../integrations/tempo.js";
-import { getCurrentTicket } from "../integrations/jira.js";
+import { getWorklogsForDate, totalLoggedHours, getLastLoggedIssueId } from "../integrations/tempo.js";
+import { getCurrentTicket, getIssue } from "../integrations/jira.js";
 import { isAbsent } from "../integrations/folks.js";
 import { isHoliday } from "./holidays.js";
 import type { Config, DayStatus, JiraIssue } from "../types/index.js";
@@ -114,6 +114,17 @@ export function formatDayStatus(status: DayStatus): string {
 export async function getCurrentTicketForUser(
   config: Config
 ): Promise<JiraIssue | null> {
+  // Priority 1: last ticket logged in Tempo (last 7 days)
+  try {
+    const issueId = await getLastLoggedIssueId(config.user.jiraAccountId);
+    if (issueId) {
+      return await getIssue(String(issueId));
+    }
+  } catch {
+    // Tempo unavailable, fall through
+  }
+
+  // Priority 2: Jira "In Progress" ticket
   return getCurrentTicket(config.user.jiraAccountId, config.user.workProject);
 }
 

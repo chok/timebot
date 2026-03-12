@@ -37,17 +37,18 @@ export async function getCurrentTicket(
   accountId: string,
   project: string
 ): Promise<JiraIssue | null> {
-  const jql = `project = "${project}" AND assignee = "${accountId}" AND status = "In Progress" ORDER BY updated DESC`;
+  const jql = `project = "${project}" AND assignee = "${accountId}" AND statusCategory = "In Progress" ORDER BY updated DESC`;
   const result = await jiraSearch(jql, 1);
   return result.issues[0] || null;
 }
 
 export async function getMyActiveTickets(
   accountId: string,
-  project: string
+  project: string,
+  maxResults = 10
 ): Promise<JiraIssue[]> {
   const jql = `project = "${project}" AND assignee = "${accountId}" AND status != "Done" ORDER BY updated DESC`;
-  return (await jiraSearch(jql, 10)).issues;
+  return (await jiraSearch(jql, maxResults)).issues;
 }
 
 export async function searchTickets(

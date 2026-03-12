@@ -141,16 +141,25 @@ function registerHandlers() {
     await handleDateContext(say, config, yesterdayStr());
   });
 
-  app.command("/continue", async ({ ack, respond, command }: any) => {
+  app.command("/aujourdhui", async ({ ack, respond, command }: any) => {
     await ack();
     const config = loadConfig();
     if (command.user_id !== config.user.slackUserId) return;
     const say = (msg: string | Record<string, any>) =>
       respond(typeof msg === "string" ? { text: msg, response_type: "ephemeral" } : { ...msg, response_type: "ephemeral" });
-    await handleContinue(say, config);
+    await handleDateContext(say, config, todayStr());
   });
 
-  // ── DM: free text (ticket key, description, "oui") ──
+  app.command("/aide", async ({ ack, respond, command }: any) => {
+    await ack();
+    const config = loadConfig();
+    if (command.user_id !== config.user.slackUserId) return;
+    const say = (msg: string | Record<string, any>) =>
+      respond(typeof msg === "string" ? { text: msg, response_type: "ephemeral" } : { ...msg, response_type: "ephemeral" });
+    await handleHelp(say);
+  });
+
+  // ── DM: free text (ticket key, description, "continue", "oui") ──
   app.message(async ({ message, say }: any) => {
     if (message.subtype) return;
     if (!("text" in message) || !message.text) return;
@@ -164,6 +173,14 @@ function registerHandlers() {
 
     if (text === "continue" || text === "continuer" || text === "oui") {
       await handleContinue(say, config);
+    } else if (text === "aide" || text === "help") {
+      await handleHelp(say);
+    } else if (text === "hier" || text === "yesterday") {
+      await handleDateContext(say, config, yesterdayStr());
+    } else if (text === "aujourd'hui" || text === "aujourdhui" || text === "today" || text === "auj") {
+      await handleDateContext(say, config, todayStr());
+    } else if (text === "rattrapage" || text === "catchup") {
+      await handleCatchup(say, config);
     } else {
       await handleFreeText(say, config, rawText);
     }
@@ -479,12 +496,11 @@ function registerHandlers() {
     ];
 
     for (const s of analysis.suggestions) {
-      const conf = s.confidence === "high" ? "🟢" : s.confidence === "medium" ? "🟡" : "🔴";
       blocks.push({
         type: "section",
         text: {
           type: "mrkdwn",
-          text: `${conf} *${s.issueKey}* — ${s.summary}\n_${s.reason}_`,
+          text: `${confidenceEmoji(s.confidence)} *${s.issueKey}* — ${s.summary}\n_${s.reason}_`,
         },
         accessory: {
           type: "button",
@@ -527,8 +543,82 @@ function registerHandlers() {
 }
 
 // ──────────────────────────────────────────────
+// GitHub activity helper
+// ──────────────────────────────────────────────
+async function getGitHubLines(config: Config, from: string, to: string): Promise<string[]> {
+  if (!config.user.githubUsername || !config.user.githubOrg) return [];
+
+  try {
+    const activity = await getActivityForPeriod(
+      config.user.githubUsername,
+      config.user.githubOrg,
+      from,
+      to
+    );
+
+    const lines: string[] = [];
+    for (const gh of activity) {
+      for (const c of gh.commits.slice(0, 5)) {
+        const msg = c.message.length > 60 ? c.message.slice(0, 57) + "..." : c.message;
+        lines.push(`💻 <${c.url}|\`${c.sha}\`> ${msg}`);
+      }
+      for (const pr of gh.prs.slice(0, 3)) {
+        const title = pr.title.length > 60 ? pr.title.slice(0, 57) + "..." : pr.title;
+        lines.push(`🔀 <${pr.url}|#${pr.number}> ${title}`);
+      }
+    }
+    return lines;
+  } catch {
+    return [];
+  }
+}
+
+// ──────────────────────────────────────────────
 // Message handlers
 // ──────────────────────────────────────────────
+
+async function handleHelp(say: SayFn) {
+  const blocks: any[] = [
+    {
+      type: "header",
+      text: { type: "plain_text", text: "Timebot — Aide / Help" },
+    },
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: [
+          "*Commandes slash:*",
+          "`/timebot` — Status du jour",
+          "`/semaine` — Resume de la semaine",
+          "`/hier` — Contexte → hier",
+          "`/aujourdhui` — Contexte → aujourd'hui",
+          "`/rattrapage` — Remplir les jours manquants",
+          "`/aide` — Cette aide",
+        ].join("\n"),
+      },
+    },
+    {
+      type: "section",
+      text: {
+        type: "mrkdwn",
+        text: [
+          "*En message direct / DM keywords:*",
+          "`continue` `continuer` `oui` — Logger le reste sur le ticket en cours / Log remaining on current ticket",
+          "`hier` `yesterday` — Contexte → hier / Switch to yesterday",
+          "`aujourd'hui` `aujourdhui` `today` `auj` — Contexte → aujourd'hui / Switch to today",
+          "`rattrapage` `catchup` — Remplir les jours manquants / Fill unfilled days",
+          "`aide` `help` — Cette aide / This help",
+          "`CYB-123` — Logger sur un ticket / Log on a specific ticket",
+          "`3h sur CYB-456, le reste sur CYB-123` — Split entre tickets / Split between tickets",
+          "_texte libre / free text_ — Claude analyse et suggere des tickets / Claude analyzes and suggests tickets",
+        ].join("\n"),
+      },
+    },
+  ];
+
+  await say({ blocks, text: "Aide Timebot" });
+}
 
 async function handleStatus(say: SayFn, config: Config) {
   const today = todayStr();
@@ -539,6 +629,12 @@ async function handleStatus(say: SayFn, config: Config) {
   if (ticket) {
     text += `\nTicket en cours: *${ticket.key}* - ${ticket.fields.summary}`;
   }
+
+  const ghLines = await getGitHubLines(config, today, today);
+  if (ghLines.length > 0) {
+    text += `\n\n${ghLines.join("\n")}`;
+  }
+
   await say(text);
 }
 
@@ -777,6 +873,12 @@ async function handleDateContext(say: SayFn, config: Config, date: string) {
   } else {
     text += `\nDecris ce que tu as fait.`;
   }
+
+  const ghLines = await getGitHubLines(config, date, date);
+  if (ghLines.length > 0) {
+    text += `\n\n${ghLines.join("\n")}`;
+  }
+
   await say(text);
 }
 
@@ -931,10 +1033,24 @@ async function handleFreeText(say: SayFn, config: Config, text: string) {
   // ── Free text → Claude ──
   await say("Analyse en cours...");
 
+  // Fetch GitHub activity for context
+  let ghActivity: GitHubActivity[] | undefined;
+  if (config.user.githubUsername && config.user.githubOrg) {
+    try {
+      ghActivity = await getActivityForPeriod(
+        config.user.githubUsername,
+        config.user.githubOrg,
+        date,
+        date
+      );
+    } catch {}
+  }
+
   const analysis = await analyzeWorkDescription(
     text,
     config.user.workProject,
-    config.user.jiraAccountId
+    config.user.jiraAccountId,
+    ghActivity
   );
 
   if (!conv) {
@@ -958,17 +1074,11 @@ async function handleFreeText(say: SayFn, config: Config, text: string) {
     });
 
     for (const s of analysis.suggestions) {
-      const confidence =
-        s.confidence === "high"
-          ? "+++"
-          : s.confidence === "medium"
-            ? "++"
-            : "+";
       blocks.push({
         type: "section",
         text: {
           type: "mrkdwn",
-          text: `[${confidence}] *${s.issueKey}* - ${s.summary}\n_${s.reason}_`,
+          text: `${confidenceEmoji(s.confidence)} *${s.issueKey}* — ${s.summary}\n_${s.reason}_`,
         },
         accessory: {
           type: "button",
@@ -980,23 +1090,22 @@ async function handleFreeText(say: SayFn, config: Config, text: string) {
     }
   }
 
-  if (analysis.shouldCreateNew && analysis.suggestedSummary) {
-    blocks.push({ type: "divider" });
-    blocks.push({
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: `Ou creer un nouveau ticket: _${analysis.suggestedSummary}_`,
-      },
-      accessory: {
-        type: "button",
-        text: { type: "plain_text", text: "Creer" },
-        action_id: "create_ticket",
-        value: analysis.suggestedSummary,
-        style: "primary",
-      },
-    });
-  }
+  const createSummary = analysis.suggestedSummary || text;
+  blocks.push({ type: "divider" });
+  blocks.push({
+    type: "section",
+    text: {
+      type: "mrkdwn",
+      text: `Ou creer un nouveau ticket: _${createSummary}_`,
+    },
+    accessory: {
+      type: "button",
+      text: { type: "plain_text", text: "Creer" },
+      action_id: "create_ticket",
+      value: createSummary,
+      style: "primary",
+    },
+  });
 
   await say({ blocks, text: "Suggestions de tickets" });
 }
@@ -1020,6 +1129,10 @@ function progressBar(logged: number, target: number): string {
 }
 
 
+
+function confidenceEmoji(confidence: string): string {
+  return confidence === "high" ? "🟢" : confidence === "medium" ? "🟡" : "🔴";
+}
 
 // ──────────────────────────────────────────────
 // Confirmation block — shown before EVERY log
